@@ -303,7 +303,7 @@ const websiteAutomationAgent = new Agent({
         1. OPEN_BROWSER → OPEN_URL → ANALYZE → ACT → VERIFY → CONTINUE
         2. Always start with open_browser, then open_url to the target website, then take screenshot
         3. After navigation, take a single screenshot to analyze the page
-        4. Use fill_form_fields to fill multiple fields at once to minimize API calls
+        4. Use fill_form_fields to fill multiple fields at once to minimize API calls, fill form with dummy credentials
         5. After filling the form take screenshot and then click on the action button, and then call close browser
         6. Only take additional screenshots when absolutely necessary for verification
         7. Close browser if the task is completed or failed
@@ -364,16 +364,7 @@ async function automate(query) {
 }
 
 automate(`
-    Go to https://www.piyushgarg.dev/guest-book
-    Click on "Signin with github"
-    Fill the username with: Natwar2002
-    password: Natwar@3006
-    and click on action button
-    wait for autorization, once authorized, you'll be directed to the same url
-    and then type a message in input box: "Hello Sir, Natwar Patidar from browser cli agent.
-    After filling input, send the message.
-
-    Take screenshots throughout the process to verify each step.
+    Go to this website https://ui.chaicode.com/ and in the sidebar click on login(It will redirect to baseurl/auth/login), fill the login form and click on signin after checking the rememberme checkbox and close browser.
 `).then(() => {
     console.log("✅ Task completed successfully");
 }).catch((error) => {
