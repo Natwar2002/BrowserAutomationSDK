@@ -1,10 +1,10 @@
 import 'dotenv/config';
 import { Agent, OpenAIProvider, Runner, setDefaultOpenAIClient, setOpenAIAPI, setTracingDisabled, tool } from '@openai/agents';
 import { z } from 'zod';
-
 import { chromium } from 'playwright';
 import OpenAI from 'openai';
 
+// Initialize OpenAI client
 const openaiClient = new OpenAI({
     apiKey: process.env.GEMINI_API_KEY,
     baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
@@ -15,119 +15,126 @@ setDefaultOpenAIClient(openaiClient);
 setOpenAIAPI("chat_completions");
 setTracingDisabled(true);
 
+// Browser instance
 const browser = await chromium.launch({
     headless: false,
-    // chromiumSandbox: true,
-    // env: {},
-    // args: ['--disable-extensions', '--disable-file-system'],
+    chromiumSandbox: true,
+    args: ['--disable-extensions', '--disable-file-system'],
 });
 
 let page;
 
 const openBrowser = tool({
     name: 'open_browser',
-    description: 'Open a browser',
+    description: 'Open a new browser instance',
     parameters: z.object({}),
     async execute() {
         console.log("\n🚀 TOOL CALLED: open_browser");
         page = await browser.newPage();
-        // Set viewport to ensure consistent coordinates
-        // await page.setViewportSize({ width: 1920, height: 1080 });
-        console.log("\n✅ SUCCESS: Browser opened successfully with viewport 1280x720");
-        return "Opened Browser";
+        await page.setViewportSize({ width: 1280, height: 800 });
+        console.log("\n✅ SUCCESS: Browser opened successfully with viewport 1280x800");
+        return "Browser opened successfully";
     }
-});
-
-let ss;
-const takeScreenShot = tool({
-    name: 'take_screenshot',
-    description: 'Takes a screenshot of the current page and returns base64',
-    parameters: z.object({
-        description: z.string().nullable().describe('Description of what you expect to see or what action was just performed')
-    }),
-    async execute(input) {
-        const { description } = input || {};
-        console.log("\n🚀 TOOL CALLED: take_screenshot" + (description ? ` - ${description}` : ""));
-        if (!page) {
-            console.log("\n❌ ERROR: No browser page available");
-            return "No browser page available. Please open browser first.";
-        }
-        const buffer = await page.screenshot({ fullPage: true, path: `screenshot-${Date.now().toString()}.png` });
-        console.log("\n📸 SUCCESS: Screenshot taken" + (description ? ` - ${description}` : ""));
-        ss = buffer.toString('base64');
-        return 'Screenshot taken successfully';
-    },
 });
 
 const openURL = tool({
     name: 'open_url',
-    description: 'Go to given URL',
+    description: 'Navigate to a specific URL',
     parameters: z.object({
-        url: z.string(),
+        url: z.string().url().describe('The URL to navigate to'),
     }),
     async execute(input) {
-        await Promise.resolve(setTimeout(() => { }, 2000));
         const { url } = input;
         console.log(`\n🚀 TOOL CALLED: open_url - Navigating to: ${url}`);
-        if (!url) {
-            console.log("\n❌ ERROR: URL is undefined");
-            return `URL is undefined`;
-        }
+
         if (!page) {
             console.log("\n❌ ERROR: No browser page available");
             return "No browser page available. Please open browser first.";
         }
+
         try {
-            await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
+            await page.goto(url, {
+                waitUntil: 'networkidle',
+                timeout: 45000
+            });
+            await page.waitForTimeout(2000); // Additional wait for page stabilization
             console.log(`\n✅ SUCCESS: Successfully navigated to ${url}`);
-            return `Successfully navigated to ${url}`;
+            return `Navigated to ${url}`;
         } catch (error) {
-            console.log(`\n❌ ERROR: Failed to navigate to ${url} - ${error?.message}`);
+            console.log(`\n❌ ERROR: Failed to navigate to ${url} - ${error.message}`);
             return `Failed to navigate to ${url}: ${error.message}`;
         }
     }
 });
 
-const fillInput = tool({
-    name: 'fill_input',
-    description: 'Fill an input field by its label, placeholder, or other attributes',
+const takeScreenShot = tool({
+    name: 'take_screenshot',
+    description: 'Capture a screenshot of the current page and return base64',
     parameters: z.object({
-        identifier: z.string().describe('Text to identify the input (label, placeholder, etc.)'),
-        value: z.string().describe('Value to fill in the input'),
-        inputType: z.string().nullable().describe('Optional: input type like "email", "password", "text", etc.')
+        context: z.string().describe('Description of what action was performed or what to expect in the screenshot')
     }),
     async execute(input) {
-        const { identifier, value, inputType } = input;
-        console.log(`\n🚀 TOOL CALLED: fill_input - Filling "${identifier}" with "${value}"`);
+        const { context } = input;
+        console.log(`\n🚀 TOOL CALLED: take_screenshot - ${context}`);
 
         if (!page) {
             console.log("\n❌ ERROR: No browser page available");
-            return "No browser page available. Please open browser first.";
+            return "No browser page available.";
         }
 
         try {
-            // Try multiple ways to find the input
+            const buffer = await page.screenshot({
+                fullPage: true,
+                type: 'jpeg',
+                quality: 30,
+                path: `screenshot-${Date.now()}.jpeg`
+            });
+            console.log(`\n📸 SUCCESS: Screenshot captured - ${context}`);
+            const ss = buffer.toString('base64');
+            return 'Screenshot taken';
+        } catch (error) {
+            console.log(`\n❌ ERROR: Failed to take screenshot - ${error.message}`);
+            return `Screenshot failed: ${error.message}`;
+        }
+    },
+});
+
+const findAndClick = tool({
+    name: 'find_and_click',
+    description: 'Find an element by text, placeholder, or selector and click it',
+    parameters: z.object({
+        identifier: z.string().describe('Text, placeholder, label, or CSS selector to identify the element'),
+        elementType: z.string().describe('Type of element (button, link, input, etc.)')
+    }),
+    async execute(input) {
+        const { identifier, elementType } = input;
+        console.log(`\n🚀 TOOL CALLED: find_and_click - Looking for: "${identifier}"`);
+
+        if (!page) {
+            console.log("\n❌ ERROR: No browser page available");
+            return "No browser page available.";
+        }
+
+        try {
+            // Try multiple strategies to find the element
             const selectors = [
+                `button:has-text("${identifier}")`,
+                `a:has-text("${identifier}")`,
                 `input[placeholder*="${identifier}" i]`,
-                `input[aria-label*="${identifier}" i]`,
-                `input[name*="${identifier}" i]`,
-                `input[id*="${identifier}" i]`,
-                `label:has-text("${identifier}") + input`,
-                `//label[contains(text(), '${identifier}')]/following-sibling::input`,
+                `[aria-label*="${identifier}" i]`,
+                `label:has-text("${identifier}")`,
+                `text=${identifier}`,
+                identifier // Try as direct selector
             ];
 
-            if (inputType) {
-                selectors.unshift(`input[type="${inputType}"][placeholder*="${identifier}" i]`);
-            }
-
             let element = null;
-            let usedSelector = '';
+            let foundSelector = '';
 
             for (const selector of selectors) {
                 try {
-                    element = await page.locator(selector).first();
-                    if (await element.isVisible()) {
-                        usedSelector = selector;
+                    element = page.locator(selector).first();
+                    if (await element.isVisible({ timeout: 3000 })) {
+                        foundSelector = selector;
                         break;
                     }
                 } catch (e) {
@@ -135,202 +142,203 @@ const fillInput = tool({
                 }
             }
 
-            if (!element || !(await element.isVisible())) {
-                console.log(`\n❌ ERROR: Input field for "${identifier}" not found or not visible`);
-                return `Input field for "${identifier}" not found or not visible`;
+            if (!element || !foundSelector) {
+                console.log(`\n❌ ERROR: Element "${identifier}" not found`);
+                return `Element "${identifier}" not found`;
             }
 
-            await element.fill(value);
-            console.log(`\n✅ SUCCESS: Filled "${identifier}" with "${value}" using selector: ${usedSelector}`);
-            return `Filled "${identifier}" with "${value}"`;
+            await element.click();
+            await page.waitForTimeout(1000); // Wait for action to complete
+            console.log(`\n✅ SUCCESS: Clicked on "${identifier}" using selector: ${foundSelector}`);
+            return `Clicked on ${identifier}`;
         } catch (error) {
-            console.log(`\n❌ ERROR: Failed to fill input - ${error.message}`);
-            return `Failed to fill input: ${error.message}`;
-        }
-    }
-})
-
-const clickOnScreen = tool({
-    name: 'click_screen',
-    description: 'Clicks on the screen with specified co-ordinates',
-    parameters: z.object({
-        x: z.number().describe('x axis on the screen where we need to click'),
-        y: z.number().describe('Y axis on the screen where we need to click'),
-    }),
-    async execute(input) {
-        const { x, y } = input;
-        console.log(`\n🚀 TOOL CALLED: click_screen - Clicking at coordinates (${x}, ${y})`);
-        if (!page) {
-            console.log("\n❌ ERROR: No browser page available");
-            return "No browser page available. Please open browser first.";
-        }
-        if (x !== undefined && y !== undefined) {
-            try {
-                // Add a small delay and hover before clicking for better reliability
-                await page.mouse.move(x, y);
-                await page.waitForTimeout(100);
-                await page.mouse.click(x, y);
-                // Wait a bit after click to let the page respond
-                await page.waitForTimeout(500);
-                console.log(`\n✅ SUCCESS: Clicked at (${x}, ${y})`);
-                return `Clicked at (${x}, ${y})`;
-            } catch (error) {
-                console.log(`\n❌ ERROR: Failed to click at (${x}, ${y}) - ${error.message}`);
-                return `Failed to click at (${x}, ${y}): ${error.message}`;
-            }
-        }
-        return 'Coordinates are undefined';
-    },
-});
-
-const sendKeys = tool({
-    name: 'send_keys',
-    description: 'Types text at the current focus or specified coordinates',
-    parameters: z.object({
-        x: z.number().describe('x axis on the screen where we need to click before typing'),
-        y: z.number().describe('Y axis on the screen where we need to click before typing'),
-        text: z.string(),
-    }),
-    async execute(input) {
-        console.log("\n🚀 TOOL CALLED: send_keys");
-        const { x, y, text } = input;
-        console.log(`\n🚀 TOOL CALLED: send_keys - Typing "${text}" at (${x}, ${y})`);
-        if (!page) {
-            console.log("\n❌ ERROR: No browser page available");
-            return "No browser page available. Please open browser first.";
-        }
-        try {
-            if (x !== undefined && y !== undefined) {
-                await page.mouse.click(x, y);
-                await page.waitForTimeout(100);
-            }
-            await page.keyboard.type(text, { delay: 50 });
-            console.log(`\n✅ SUCCESS: Typed "${text}"`);
-            return `Typed: ${text}`;
-        } catch (error) {
-            console.log(`\n❌ ERROR: Failed to type text - ${error.message}`);
-            return `Failed to type text: ${error.message}`;
+            console.log(`\n❌ ERROR: Failed to click - ${error.message}`);
+            return `Click failed: ${error.message}`;
         }
     }
 });
 
-// Don't need this but Piyush sir asked to implement, so...
-const doubleClick = tool({
-    name: 'double_click',
-    description: "Double clicks at the specified screen coordinates.",
+const fillFormFields = tool({
+    name: 'fill_form_fields',
+    description: 'Fill multiple form fields at once to reduce API calls',
     parameters: z.object({
-        x: z.number().describe('x axis on the screen where we need to click'),
-        y: z.number().describe('y axis on the screen where we need to click'),
+        fields: z.array(z.object({
+            fieldIdentifier: z.string().describe('Label text, placeholder, or field name'),
+            value: z.string().describe('Value to fill in the field'),
+            fieldType: z.string().describe('Expected field type (text, email, password, etc.)')
+        })).describe('Array of field objects to fill')
     }),
     async execute(input) {
-        let { x, y } = input;
-        console.log(`\n🚀 TOOL CALLED: double_click - Double clicking at (${x}, ${y})`);
+        const { fields } = input;
+        console.log(`\n🚀 TOOL CALLED: fill_form_fields - Filling ${fields.length} fields`);
+
         if (!page) {
             console.log("\n❌ ERROR: No browser page available");
-            return "No browser page available. Please open browser first.";
+            return "No browser page available.";
         }
-        if (x !== undefined && y !== undefined) {
+
+        const results = [];
+
+        for (const field of fields) {
+            const { fieldIdentifier, value, fieldType } = field;
+            console.log(`\n🔧 Processing field: "${fieldIdentifier}" with value: "${value}"`);
+
             try {
-                await page.mouse.dblclick(x, y);
-                console.log(`\n✅ SUCCESS: Double clicked at (${x}, ${y})`);
-                return `Double clicked at (${x}, ${y})`;
+                const selectors = [
+                    `input[placeholder*="${fieldIdentifier}" i]`,
+                    `input[aria-label*="${fieldIdentifier}" i]`,
+                    `input[name*="${fieldIdentifier}" i]`,
+                    `input[id*="${fieldIdentifier}" i]`,
+                    `label:has-text("${fieldIdentifier}") + input, label:has-text("${fieldIdentifier}") ~ input`,
+                    `//label[contains(., '${fieldIdentifier}')]/following::input[1]`
+                ];
+
+                if (fieldType) {
+                    selectors.unshift(`input[type="${fieldType}"][placeholder*="${fieldIdentifier}" i]`);
+                }
+
+                let element = null;
+                let usedSelector = '';
+
+                for (const selector of selectors) {
+                    try {
+                        element = page.locator(selector).first();
+                        if (await element.isVisible({ timeout: 3000 })) {
+                            usedSelector = selector;
+                            break;
+                        }
+                    } catch (e) {
+                        continue;
+                    }
+                }
+
+                if (!element || !usedSelector) {
+                    console.log(`\n❌ ERROR: Field "${fieldIdentifier}" not found`);
+                    results.push(`Field "${fieldIdentifier}" not found`);
+                    continue;
+                }
+
+                await element.fill(value);
+                await page.waitForTimeout(300);
+                console.log(`\n✅ SUCCESS: Filled "${fieldIdentifier}" with "${value}"`);
+                results.push(`Filled ${fieldIdentifier} with ${value}`);
             } catch (error) {
-                console.log(`\n❌ ERROR: Failed to double click at (${x}, ${y}) - ${error.message}`);
-                return `Failed to double click at (${x}, ${y}): ${error.message}`;
+                console.log(`\n❌ ERROR: Failed to fill field "${fieldIdentifier}" - ${error.message}`);
+                results.push(`Failed to fill ${fieldIdentifier}: ${error.message}`);
             }
         }
-        console.log("\n❌ ERROR: Coordinates are undefined");
-        return 'Coordinates are undefined';
-    }
-})
 
-const scroll = tool({
-    name: 'scroll',
-    description: 'Scrolls the page vertically by a given amount',
+        return results.join('\n');
+    }
+});
+
+const scrollPage = tool({
+    name: 'scroll_page',
+    description: 'Scroll the page vertically or to a specific element',
     parameters: z.object({
-        deltaY: z.number().describe('Vertical pixels to scroll (Positive = down, negative = up)'),
+        direction: z.enum(['up', 'down', 'to-element']).describe('Scroll direction or target'),
+        pixels: z.number().describe('Number of pixels to scroll (for up/down)'),
+        elementIdentifier: z.string().describe('Element identifier for scroll-to-element')
     }),
     async execute(input) {
-        let { deltaY } = input;
-        console.log(`\n🚀 TOOL CALLED: scroll - Scrolling ${deltaY > 0 ? 'down' : 'up'} by ${Math.abs(deltaY)} pixels`);
+        const { direction, pixels = 500, elementIdentifier } = input;
+        console.log(`\n🚀 TOOL CALLED: scroll_page - ${direction} ${pixels ? pixels + 'px' : ''}`);
+
         if (!page) {
             console.log("\n❌ ERROR: No browser page available");
-            return "No browser page available. Please open browser first.";
+            return "No browser page available.";
         }
+
         try {
-            await page.mouse.wheel(0, deltaY);
-            console.log(`\n✅ SUCCESS: Scrolled ${deltaY > 0 ? 'down' : 'up'} by ${Math.abs(deltaY)} pixels`);
-            return `Scrolled by ${deltaY} pixels vertically`;
+            if (direction === 'to-element' && elementIdentifier) {
+                const element = page.locator(`text=${elementIdentifier}`).first();
+                await element.scrollIntoViewIfNeeded();
+                await page.waitForTimeout(1000);
+            } else {
+                const scrollAmount = direction === 'up' ? -pixels : pixels;
+                await page.evaluate((amount) => {
+                    window.scrollBy(0, amount);
+                }, scrollAmount);
+                await page.waitForTimeout(800);
+            }
+
+            console.log(`\n✅ SUCCESS: Scrolled ${direction}`);
+            return `Scrolled ${direction}`;
         } catch (error) {
-            console.log(`\n❌ ERROR: Failed to scroll - ${error?.message}`);
-            return `Failed to scroll: ${error?.message}`;
+            console.log(`\n❌ ERROR: Failed to scroll - ${error.message}`);
+            return `Scroll failed: ${error.message}`;
         }
-    },
+    }
 });
 
 const closeBrowser = tool({
     name: "close_browser",
-    description: "Closes the browser",
+    description: "Close the browser instance",
     parameters: z.object({}),
-    async execute() {
+    async Execute() {
         console.log("\n🚀 TOOL CALLED: close_browser");
         try {
             if (page) {
                 await page.close();
+                page = null;
             }
             await browser.close();
             console.log("\n✅ SUCCESS: Browser closed successfully");
-            return "Browser closed successfully";
+            return "Browser closed";
         } catch (error) {
             console.log(`\n❌ ERROR: Failed to close browser - ${error.message}`);
-            return `Failed to close browser: ${error?.message}`;
+            return `Close failed: ${error.message}`;
         }
-    },
-})
-
+    }
+});
 
 const websiteAutomationAgent = new Agent({
-    name: 'WebSite Automation Agent',
+    name: 'Website Automation Expert',
     instructions: `
-        You are an expert website automation agent that helps users interact with web pages.
+        You are an expert web automation agent that performs precise website interactions.
 
-        Your role:
-        - Assist users in navigating, interacting, and extracting information from websites.
-        - Use the available tools effectively to perform any task.
+        IMPORTANT: Use fill_form_fields to fill all form fields in one operation to minimize API calls.
 
-        Available tools:
-        - open_browser: Initialize a new browser tab
-        - open_url: Navigate to a specific URL
-        - click_screen: Click at specific coordinates
-        - send_keys: Type text (optionally at specific coordinates)
-        - double_click: Double click at specific coordinates
-        - scroll: Scroll the page vertically
-        - fill_input: Fill an input field by its label, placeholder, or other attributes
-        - take_screenshot: Capture current page state
-        - close_browser: Close the browser when done
+        CORE WORKFLOW:
+        1. OPEN_BROWSER → OPEN_URL → ANALYZE → ACT → VERIFY → CONTINUE
+        2. Always start with open_browser, then open_url to the target website, then take screenshot
+        3. After navigation, take a single screenshot to analyze the page
+        4. Use fill_form_fields to fill multiple fields at once to minimize API calls
+        5. After filling the form take screenshot and then click on the action button, and then call close browser
+        6. Only take additional screenshots when absolutely necessary for verification
+        7. Close browser if the task is completed or failed
 
-        BEST PRACTICES:
-        1. Use click_element_by_text and find_element_by_text instead of coordinates when possible - it's more reliable
-        2. Always take screenshots to verify current state
-        3. Look carefully at button text - LOGIN vs SIGNUP are different
-        4. Use dummy credentials: i.e First-name: 'Natwar' Last-name: 'Patidar' email: "natwar.spam@gmail.com", password: 'natwar@123' confirm-password: 'natwar@123'
+        API CALL OPTIMIZATION:
+        - Use fill_form_fields to process multiple form fields in a single API call
+        - Minimize screenshots - only capture when the UI has significantly changed
+        - Plan all form filling in a single operation when possible
+        - Avoid unnecessary intermediate steps
 
-        Rules:
-        1. ALWAYS start by calling "open_browser" to initialize a new browser tab.
-        2. After opening browser, navigate to the URL using "open_url".
-        3. Take screenshot only when the url changes or any tool call that changes the UI.
-        4. **CRITICAL**: After taking each screenshot, you MUST describe what you see in detail using console.log to keep the user informed about progress. Include details about:
-           - What page/section is currently visible
-           - Current state of any forms or interactions
-           - Next planned action based on what you observe
-        5. Analyze the screenshot carefully to determine the next action.
-        6. When scrolling, scroll gradually and take screenshots to track progress.
-        7. Always close the browser when the task is complete using 'close_browser'.
-        8. Follow a systematic cycle: **Plan → Execute → Screenshot → Describe → Continue**.
-        9. Be patient and wait for pages to load before taking actions.
-        10. Perform each and every task from the user query in a squential manner.
+        SCREENSHOT STRATEGY:
+        - Take initial screenshot after page load to understand layout
+        - Only take additional screenshots if something unexpected happens
+        - Avoid screenshots after each form field fill
+
+        ACTION PRINCIPLES:
+        - Use find_and_click for buttons and interactive elements
+        - Use fill_form_fields for all form inputs in one go when possible
+        - Scroll only when needed to reveal hidden elements
+
+        CRITICAL RULES:
+        1. Use fill_form_fields to process all related form fields together
+        2. Minimize API calls by batching operations
+        3. Close the browser when task is complete
+        4. Be methodical and efficient with actions
     `,
-    tools: [openBrowser, openURL, takeScreenShot, clickOnScreen, scroll, sendKeys, doubleClick, closeBrowser, fillInput],
+    tools: [
+        openBrowser,
+        openURL,
+        takeScreenShot,
+        findAndClick,
+        fillFormFields,
+        scrollPage,
+        closeBrowser
+    ],
     model: 'gemini-2.5-flash',
 });
 
@@ -338,25 +346,36 @@ async function automate(query) {
     try {
         const runner = new Runner({ modelProvider });
         const result = await runner.run(websiteAutomationAgent, query);
-        console.log("Automation completed:", result.finalOutput);
+        console.log("🎉 Automation completed successfully:", result.finalOutput);
         return result;
     } catch (error) {
-        console.error("Automation failed:", error);
+        console.error("❌ Automation failed:", error);
 
-        // Cleanup if case of bug
+        // Cleanup on failure
         try {
-            await browser.close();
+            if (browser) {
+                await browser.close();
+            }
         } catch (cleanupError) {
-            console.error("Failed to cleanup browser:", cleanupError);
+            console.error("Cleanup failed:", cleanupError);
         }
         throw error;
     }
 }
 
-automate('Go to this website https://ui.chaicode.com/ and in the sidebar click on LOGIN(It will redirect to baseurl/auth/login), fill the login form and click on signin after checking the rememberme checkbox.')
-    .then(() => {
-        console.log("Task completed successfully");
-    })
-    .catch((error) => {
-        console.error("Task failed:", error);
-    });
+automate(`
+    Go to https://www.piyushgarg.dev/guest-book
+    Click on "Signin with github"
+    Fill the username with: Natwar2002
+    password: Natwar@3006
+    and click on action button
+    wait for autorization, once authorized, you'll be directed to the same url
+    and then type a message in input box: "Hello Sir, Natwar Patidar from browser cli agent.
+    After filling input, send the message.
+
+    Take screenshots throughout the process to verify each step.
+`).then(() => {
+    console.log("✅ Task completed successfully");
+}).catch((error) => {
+    console.error("❌ Task failed:", error);
+});
